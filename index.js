@@ -3,8 +3,6 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
-// 🔥 ВОТ ОН, ФИКС ОШИБКИ CORS 🔥
-// Разрешаем браузерам отправлять нам запросы
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*"); // Разрешаем запросы с любых доменов
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
