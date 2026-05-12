@@ -3,12 +3,12 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+// Разрешаем браузерам отправлять нам запросы (обходим CORS)
 app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*"); // Разрешаем запросы с любых доменов
+    res.header("Access-Control-Allow-Origin", "*"); 
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type");
     
-    // Браузер перед POST-запросом шлет проверочный OPTIONS-запрос. Отвечаем ему ОК.
     if (req.method === "OPTIONS") {
         return res.sendStatus(200);
     }
@@ -16,13 +16,17 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-const BOT_TOKEN = process.env.BOT_TOKEN; 
-const SECRET_KEY = process.env.SECRET_KEY; 
+// Берем токен (на всякий случай проверяем и системную переменную хостинга)
+const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN; 
+
+// 🔥 ИЩЕМ ПАРОЛЬ В ЛЮБОЙ ИЗ ДВУХ ПЕРЕМЕННЫХ 🔥
+const EXPECTED_SECRET = process.env.SECRET_KEY || process.env['nota-notify']; 
 
 app.post('/notify', async (req, res) => {
     const { secret, chatId, message } = req.body;
 
-    if (secret !== SECRET_KEY) {
+    // Сравниваем присланный пароль с ожидаемым
+    if (secret !== EXPECTED_SECRET) {
         return res.status(403).json({ error: 'Доступ запрещен. Неверный ключ.' });
     }
 
@@ -60,7 +64,7 @@ app.post('/notify', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Notacross Notifier Bot is running! 🚀 CORS enabled!');
+    res.send('Notacross Notifier Bot is running! 🚀 CORS enabled & Secret check updated!');
 });
 
 app.listen(PORT, () => {
