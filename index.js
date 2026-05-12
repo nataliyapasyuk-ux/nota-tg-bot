@@ -3,6 +3,20 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+// 🔥 ВОТ ОН, ФИКС ОШИБКИ CORS 🔥
+// Разрешаем браузерам отправлять нам запросы
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*"); // Разрешаем запросы с любых доменов
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    
+    // Браузер перед POST-запросом шлет проверочный OPTIONS-запрос. Отвечаем ему ОК.
+    if (req.method === "OPTIONS") {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN; 
 const SECRET_KEY = process.env.SECRET_KEY; 
@@ -48,7 +62,7 @@ app.post('/notify', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Notacross Notifier Bot is running! 🚀');
+    res.send('Notacross Notifier Bot is running! 🚀 CORS enabled!');
 });
 
 app.listen(PORT, () => {
