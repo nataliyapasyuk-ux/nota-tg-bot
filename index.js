@@ -3,7 +3,7 @@ const fs = require('fs');
 const app = express();
 app.use(express.json());
 
-// Разрешаем CORS
+// Разрешаем CORS (чтобы браузеры не блокировали запросы)
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*"); 
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN; 
 const EXPECTED_SECRET = process.env.SECRET_KEY || process.env['nota-notify']; 
 
-// Создаем файл для привязок, если его нет
+// Создаем файл для привязок ID, если его еще нет
 const USERS_FILE = './users.json';
 if (!fs.existsSync(USERS_FILE)) {
     fs.writeFileSync(USERS_FILE, JSON.stringify({}));
@@ -26,7 +26,8 @@ if (!fs.existsSync(USERS_FILE)) {
 // 1. СЛУШАЕМ КОМАНДЫ ОТ ТЕЛЕГРАМА
 // ==========================================
 app.post('/tg-webhook', async (req, res) => {
-    res.sendStatus(200); // Обязательно сразу отвечаем ТГ, что запрос принят
+    // Обязательно сразу отвечаем Телеграму 200 OK, иначе он будет повторять запрос
+    res.sendStatus(200); 
 
     const message = req.body.message;
     if (!message || !message.text) return;
@@ -34,7 +35,7 @@ app.post('/tg-webhook', async (req, res) => {
     const chatId = message.chat.id;
     const text = message.text;
 
-    // Ловим команду привязки (например: /start notacross_4)
+    // Сценарий А: Переход по умной ссылке с форума (привязка)
     if (text.startsWith('/start notacross_')) {
         const forumId = text.split('_')[1];
 
@@ -52,6 +53,17 @@ app.post('/tg-webhook', async (req, res) => {
                 text: `✅ Супер! Ваш профиль на форуме Notacross (ID: ${forumId}) успешно привязан. Теперь сюда будут приходить уведомления.`
             })
         });
+    } 
+    // Сценарий Б: Пользователь просто нажал Start или перезапустил бота
+    else if (text === '/start') {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: chatId,
+                text: `👋 Привет! Я бот-почтальон форума Notacross. Чтобы я начал присылать тебе уведомления, перейди по специальной ссылке из своего профиля на форуме!`
+            })
+        });
     }
 });
 
@@ -59,13 +71,14 @@ app.post('/tg-webhook', async (req, res) => {
 // 2. ПРИНИМАЕМ ПУШИ С ФОРУМА
 // ==========================================
 app.post('/notify', async (req, res) => {
-    // ВАЖНО: теперь мы ждем forumId (например, 4), а не chatId
     const { secret, forumId, message } = req.body;
 
+    // Проверка пароля
     if (secret !== EXPECTED_SECRET) {
         return res.status(403).json({ error: 'Доступ запрещен. Неверный ключ.' });
     }
 
+    // Проверка параметров
     if (!forumId || !message) {
         return res.status(400).json({ error: 'Отсутствует forumId или текст сообщения' });
     }
@@ -74,7 +87,7 @@ app.post('/notify', async (req, res) => {
     const users = JSON.parse(fs.readFileSync(USERS_FILE));
     const chatId = users[forumId];
 
-    // Если человек не привязал бота — просто игнорируем, это не ошибка
+    // Если человек не привязал бота — просто игнорируем (это нормальная ситуация)
     if (!chatId) {
         return res.status(200).json({ info: 'Пользователь не привязан к Телеграму' });
     }
@@ -107,8 +120,9 @@ app.post('/notify', async (req, res) => {
     }
 });
 
+// Заглушка для проверки работоспособности
 app.get('/', (req, res) => {
-    res.send('Notacross Bot v2 is running! Webhooks ready.');
+    res.send('Notacross Bot v3 is running! Webhooks and greetings are ready.');
 });
 
 app.listen(PORT, () => {
