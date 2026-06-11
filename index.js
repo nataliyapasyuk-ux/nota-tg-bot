@@ -1,9 +1,7 @@
 const express = require('express');
-const fs = require('fs');
 const app = express();
 app.use(express.json());
 
-// Разрешаем CORS (чтобы браузеры не блокировали запросы)
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*"); 
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -15,19 +13,13 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN; 
 const EXPECTED_SECRET = process.env.SECRET_KEY || process.env['nota-notify']; 
-
-// Создаем файл для привязок ID, если его еще нет
-const USERS_FILE = './users.json';
-if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify({}));
-}
+const VPS_NOTIFY_URL = "https://notahub.ru/distrib/database/nota/notify.php";
 
 // ==========================================
-// 1. СЛУШАЕМ КОМАНДЫ ОТ ТЕЛЕГРАМА
+// 1. СЛУШАЕМ КОМАНДЫ ОТ ТЕЛЕГРАМА (WEBHOOK)
 // ==========================================
 app.post('/tg-webhook', async (req, res) => {
-    // Обязательно сразу отвечаем Телеграму 200 OK, иначе он будет повторять запрос
-    res.sendStatus(200); 
+    res.sendStatus(200);
 
     const message = req.body.message;
     if (!message || !message.text) return;
@@ -35,96 +27,86 @@ app.post('/tg-webhook', async (req, res) => {
     const chatId = message.chat.id;
     const text = message.text;
 
-    // Сценарий А: Переход по умной ссылке с форума (привязка)
-    if (text.startsWith('/start notacross_')) {
-        const forumId = text.split('_')[1];
+    if (text.startsWith('/start ') && text.length > 7) {
+        const token = text.split(' ')[1];
 
-        // Читаем базу, добавляем новую связку и сохраняем
-        const users = JSON.parse(fs.readFileSync(USERS_FILE));
-        users[forumId] = chatId;
-        fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+        try {
+            const response = await fetch(VPS_NOTIFY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    secret: EXPECTED_SECRET,
+                    action: 'exchange_tg_token',
+                    token: token,
+                    telegram_id: chatId,
+                    forum_prefix: 'notacross'
+                })
+            });
 
-        // Отправляем радостное сообщение пользователю
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: chatId,
-                text: `✅ Супер! Ваш профиль на форуме Notacross (ID: ${forumId}) успешно привязан. Теперь сюда будут приходить уведомления.`
-            })
-        });
+            const result = await response.json();
+
+            if (result.success) {
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: `✅ <b>Успешно привязано!</b>\n\nВаш аккаунт привязан к основе (ID: ${result.user_id}). Теперь уведомления для всех ваших твинков, связанных с этим мэйном, будут приходить в этот чат автоматически!`,
+                        parse_mode: 'HTML'
+                    })
+                });
+            } else {
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: `❌ <b>Ошибка!</b> Код авторизации устарел. Пожалуйста, сгенерируйте новый код в модалке на форуме.`,
+                        parse_mode: 'HTML'
+                    })
+                });
+            }
+        } catch (err) {
+            console.error('Ошибка при обмене токена:', err);
+        }
     } 
-    // Сценарий Б: Пользователь просто нажал Start или перезапустил бота
     else if (text === '/start') {
         await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 chat_id: chatId,
-                text: `👋 Привет! Я бот-почтальон форума Notacross. Чтобы я начал присылать тебе уведомления, перейди по специальной ссылке из своего профиля на форуме!`
+                text: `👋 Привет! Чтобы подключить моментальные уведомления, открой модалку уведомлений (колокольчик) на форуме и нажми кнопку активации.`,
+                parse_mode: 'HTML'
             })
         });
     }
 });
 
 // ==========================================
-// 2. ПРИНИМАЕМ ПУШИ С ФОРУМА
+// 2. ПРИНИМАЕМ ПУШИ С ФОРУМА ДЛЯ ОТПРАВКИ
 // ==========================================
 app.post('/notify', async (req, res) => {
-    const { secret, forumId, message } = req.body;
+    const { secret, telegramId, message } = req.body;
 
-    // Проверка пароля
-    if (secret !== EXPECTED_SECRET) {
-        return res.status(403).json({ error: 'Доступ запрещен. Неверный ключ.' });
-    }
-
-    // Проверка параметров
-    if (!forumId || !message) {
-        return res.status(400).json({ error: 'Отсутствует forumId или текст сообщения' });
-    }
-
-    // Ищем Телеграм ID по форумному ID
-    const users = JSON.parse(fs.readFileSync(USERS_FILE));
-    const chatId = users[forumId];
-
-    // Если человек не привязал бота — просто игнорируем (это нормальная ситуация)
-    if (!chatId) {
-        return res.status(200).json({ info: 'Пользователь не привязан к Телеграму' });
-    }
+    if (secret !== EXPECTED_SECRET) return res.status(403).json({ error: 'Forbidden' });
+    if (!telegramId || !message) return res.status(400).json({ error: 'Missing data' });
 
     try {
-        const tgUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-        const response = await fetch(tgUrl, {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                chat_id: chatId,
+                chat_id: telegramId,
                 text: message,
                 parse_mode: 'HTML',
                 disable_web_page_preview: true
             })
         });
-
-        const data = await response.json();
-        
-        if (!data.ok) {
-            console.error('Ошибка Telegram API:', data);
-            return res.status(500).json({ error: 'Ошибка отправки в ТГ', details: data });
-        }
-
         res.status(200).json({ success: true });
-
     } catch (error) {
-        console.error('Ошибка сервера:', error);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+        res.status(500).json({ error: 'Internal error' });
     }
 });
 
-// Заглушка для проверки работоспособности
-app.get('/', (req, res) => {
-    res.send('Notacross Bot v3 is running! Webhooks and greetings are ready.');
-});
-
-app.listen(PORT, () => {
-    console.log(`Сервер запущен на порту ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Бот запущен на порту ${PORT}`));
